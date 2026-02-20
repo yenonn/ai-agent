@@ -707,6 +707,95 @@ python scripts/session_manager.py restore checkpoint_20240101_123000
 python scripts/session_manager.py status
 ```
 
+### 3.6 Shared Knowledge Store
+
+The orchestrator maintains a shared knowledge store that persists reusable insights, patterns, decisions, and lessons across sessions and agents. Agents automatically receive relevant entries in their prompts and can contribute new knowledge after completing tasks.
+
+**Storage Location:** Knowledge data is stored alongside other team state (default: `~/.dev_team/knowledge.json`). Configurable via the `DEV_TEAM_DIR` environment variable, same as sessions and tasks.
+
+#### Purpose
+
+The knowledge store provides cross-session, cross-agent memory for:
+- Architectural decisions that apply to future work
+- Coding patterns standardised by the team
+- Bug fixes and lessons learned from past issues
+- Security mitigations and conventions
+- Performance optimisations that have been validated
+
+#### Reading Knowledge
+
+Agents receive relevant knowledge entries automatically in their delegation prompts. They can also query the store directly:
+
+```bash
+# Get entries relevant to a specific agent role and context
+python scripts/knowledge_store.py for-agent coder "authentication,jwt" --limit 5
+
+# Search by keyword across all entries
+python scripts/knowledge_store.py search "" --category security --limit 10
+
+# Retrieve a specific entry by ID
+python scripts/knowledge_store.py get know_003
+```
+
+#### Writing Knowledge
+
+After completing a task, agents should contribute if they discovered anything reusable:
+
+```bash
+python scripts/knowledge_store.py add "title" "category" "content" "summary" "tags" "agent_name" "task_id" "high"
+```
+
+Example:
+
+```bash
+python scripts/knowledge_store.py add \
+  "Always validate JWT expiry before processing requests" \
+  "security" \
+  "Discovered that the auth middleware was not checking exp claim. Added explicit expiry validation using datetime.utcnow(). This prevents replay attacks with expired tokens." \
+  "Validate JWT exp claim explicitly in middleware; do not rely on library defaults alone." \
+  "jwt,auth,security,middleware" \
+  "coder" \
+  "task_014" \
+  "high"
+```
+
+#### When to Write
+
+Contribute a knowledge entry when you discover:
+- A non-obvious bug and its root cause
+- An architectural decision with lasting impact on the codebase
+- A security issue that was mitigated and should not recur
+- A performance optimisation that was validated with measurement
+- A coding pattern that should be standardised across the team
+
+#### Categories
+
+| Category | Description |
+|---|---|
+| `convention` | Code style, naming, and structural conventions the team follows |
+| `architecture` | High-level design decisions and system structure choices |
+| `bug_fix` | Root causes of bugs and the fixes applied |
+| `security` | Vulnerabilities found, mitigations applied, and security patterns |
+| `performance` | Bottlenecks identified and optimisations validated |
+| `pattern` | Reusable implementation patterns and idioms |
+| `lesson_learned` | Retrospective insights and process improvements |
+| `dependency` | Third-party library decisions, version constraints, and gotchas |
+| `testing` | Test strategies, coverage patterns, and testing conventions |
+| `devops` | CI/CD, deployment, and infrastructure decisions |
+| `documentation` | Documentation standards and conventions |
+
+#### Deprecating Stale Knowledge
+
+When a knowledge entry becomes outdated, add a corrected version first, then deprecate the old one:
+
+```bash
+# Add corrected version first
+python scripts/knowledge_store.py add "Updated JWT validation approach" "security" "..." "..." "jwt,auth" "architect" "task_042" "high"
+
+# Deprecate the old entry, linking to the replacement
+python scripts/knowledge_store.py deprecate know_017 know_042
+```
+
 ### 4. Quality Gates
 Before transitioning between states:
 - Debug → Coder: Root cause identified, fix strategy documented
