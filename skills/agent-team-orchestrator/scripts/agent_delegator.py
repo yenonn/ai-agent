@@ -8,7 +8,7 @@ import json
 import os
 import sys
 from datetime import datetime
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Set
 from pathlib import Path
 from dataclasses import dataclass, asdict, field
 
@@ -379,6 +379,72 @@ class AgentDelegator:
             # Silently fail if session manager not available
             pass
 
+    def _extract_keywords(self, delegation: "DelegationContext") -> List[str]:
+        """Extract meaningful keywords from delegation requirements for knowledge lookup."""
+        stop_words: Set[str] = {
+            "a", "an", "the", "is", "in", "on", "at", "to", "of", "for",
+            "with", "and", "or", "not", "this", "that", "are", "was", "be",
+            "have", "has", "do", "does", "it", "as", "by", "from",
+        }
+        keywords: List[str] = []
+
+        def extract_from_value(v: Any) -> None:
+            if isinstance(v, str):
+                for word in v.lower().split():
+                    word = word.strip(".,;:!?\"'()[]{}")
+                    if word and len(word) > 3 and word not in stop_words:
+                        keywords.append(word)
+            elif isinstance(v, dict):
+                for val in v.values():
+                    extract_from_value(val)
+            elif isinstance(v, list):
+                for item in v:
+                    extract_from_value(item)
+
+        extract_from_value(delegation.requirements)
+        extract_from_value(delegation.handoff_notes)  # str
+        extract_from_value(delegation.deliverables)   # List[str]
+
+        # Deduplicate preserving order, limit to 15
+        seen: Set[str] = set()
+        result: List[str] = []
+        for k in keywords:
+            if k not in seen:
+                seen.add(k)
+                result.append(k)
+            if len(result) >= 15:
+                break
+        return result
+
+    def _get_relevant_knowledge(self, agent: str, context_keywords: Optional[List[str]] = None) -> str:
+        """Fetch relevant knowledge entries and format as a markdown section for prompts."""
+        try:
+            import importlib.util
+            ks_path = Path(__file__).parent / "knowledge_store.py"
+            if not ks_path.exists():
+                return ""
+            spec = importlib.util.spec_from_file_location("knowledge_store", ks_path)
+            if not spec or not spec.loader:
+                return ""
+            ks_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(ks_module)
+            store = ks_module.KnowledgeStore()
+            entries = store.get_for_agent(agent, context_keywords, limit=5)
+            if not entries:
+                return ""
+            lines = ["## Relevant Team Knowledge\n"]
+            for e in entries:
+                lines.append(f"### [{e['category']}] {e['title']} (confidence: {e['confidence']})")
+                lines.append(f"{e['summary']}")
+                if e.get("tags"):
+                    lines.append(f"_Tags: {', '.join(e['tags'])}_")
+                lines.append("")
+            lines.append("---")
+            lines.append("")
+            return "\n".join(lines)
+        except Exception:
+            return ""
+
     def _generate_architect_prompt(self, delegation: DelegationContext) -> str:
         """Generate delegation prompt for Architect agent."""
         return f"""# Architecture Analysis Request
@@ -405,7 +471,7 @@ class AgentDelegator:
 ## Previous Context
 {json.dumps(delegation.context_accumulated, indent=2) if delegation.context_accumulated else "No previous context"}
 
----
+{self._get_relevant_knowledge("architect", self._extract_keywords(delegation))}---
 
 Please analyze the requirements and create comprehensive technical specifications including:
 1. System architecture design
@@ -416,7 +482,11 @@ Please analyze the requirements and create comprehensive technical specification
 6. Performance requirements
 7. Implementation guidelines
 
-After completion, document your architectural decisions and provide clear specifications for the Coder agent."""
+After completion, document your architectural decisions and provide clear specifications for the Coder agent.
+
+## Knowledge Contribution (Optional but Encouraged)
+If you discover a reusable insight, pattern, fix, or decision, record it:
+    python scripts/knowledge_store.py add "<title>" "<category>" "<content>" "<summary>" "<tags_csv>" "architect" "<task_id>" "high\""""
 
     def _generate_coder_prompt(self, delegation: DelegationContext) -> str:
         """Generate delegation prompt for Coder agent."""
@@ -456,7 +526,7 @@ After completion, document your architectural decisions and provide clear specif
 - [ ] Security best practices applied
 - [ ] Performance considerations addressed
 
----
+{self._get_relevant_knowledge("coder", self._extract_keywords(delegation))}---
 
 Please implement the features according to the architectural specifications. Focus on:
 1. Clean, modular, extensible code
@@ -464,7 +534,11 @@ Please implement the features according to the architectural specifications. Foc
 3. Thorough documentation
 4. Security best practices
 
-After implementation, prepare the code for review by the PR Reviewer agent."""
+After implementation, prepare the code for review by the PR Reviewer agent.
+
+## Knowledge Contribution (Optional but Encouraged)
+If you discover a reusable insight, pattern, fix, or decision, record it:
+    python scripts/knowledge_store.py add "<title>" "<category>" "<content>" "<summary>" "<tags_csv>" "coder" "<task_id>" "high\""""
 
     def _generate_reviewer_prompt(self, delegation: DelegationContext) -> str:
         """Generate delegation prompt for PR Reviewer agent."""
@@ -514,6 +588,7 @@ After implementation, prepare the code for review by the PR Reviewer agent."""
 - [ ] Efficient algorithms
 - [ ] Appropriate caching
 
+{self._get_relevant_knowledge("pr_reviewer", self._extract_keywords(delegation))}
 ## Approval Criteria
 {self._format_list(delegation.success_criteria)}
 
@@ -526,7 +601,11 @@ Provide structured feedback:
 
 ---
 
-Please conduct a thorough review. If approved, provide merge recommendation. If changes needed, list specific actionable items."""
+Please conduct a thorough review. If approved, provide merge recommendation. If changes needed, list specific actionable items.
+
+## Knowledge Contribution (Optional but Encouraged)
+If you discover a reusable insight, pattern, fix, or decision, record it:
+    python scripts/knowledge_store.py add "<title>" "<category>" "<content>" "<summary>" "<tags_csv>" "pr_reviewer" "<task_id>" "high\""""
 
     def _generate_qa_prompt(self, delegation: DelegationContext) -> str:
         """Generate delegation prompt for QA/Tester agent."""
@@ -551,6 +630,7 @@ Please conduct a thorough review. If approved, provide merge recommendation. If 
 ## Acceptance Criteria
 {self._format_list(delegation.success_criteria)}
 
+{self._get_relevant_knowledge("qa_tester", self._extract_keywords(delegation))}
 ## Test Scenarios to Execute
 1. Functional testing of all requirements
 2. Edge case validation
@@ -568,7 +648,11 @@ Please conduct a thorough review. If approved, provide merge recommendation. If 
 
 ---
 
-Execute comprehensive testing and provide detailed results. Flag any issues that block release."""
+Execute comprehensive testing and provide detailed results. Flag any issues that block release.
+
+## Knowledge Contribution (Optional but Encouraged)
+If you discover a reusable insight, pattern, fix, or decision, record it:
+    python scripts/knowledge_store.py add "<title>" "<category>" "<content>" "<summary>" "<tags_csv>" "qa_tester" "<task_id>" "high\""""
 
     def _format_list(self, items: List[str]) -> str:
         """Format a list for display."""
