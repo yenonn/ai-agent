@@ -24,6 +24,14 @@ sys.path.insert(0, str(Path(__file__).parent))
 # Import verifiers
 from ralph_verifiers import get_verifier_for_agent, VerificationResult
 
+# Import sound notifications
+try:
+    from sound_notifications import get_notifier
+    SOUNDS_AVAILABLE = True
+except ImportError:
+    SOUNDS_AVAILABLE = False
+    print("Warning: Sound notifications not available", file=sys.stderr)
+
 
 @dataclass
 class RalphLoopConfig:
@@ -34,6 +42,7 @@ class RalphLoopConfig:
     max_cost: Optional[float] = None
     enable_feedback_injection: bool = True
     verbose: bool = False
+    enable_sounds: bool = True  # Enable sound notifications
 
 
 @dataclass
@@ -69,6 +78,11 @@ class RalphLoopAgent:
         self.estimated_cost = 0.0
         self.verification_history = []
         self.all_results = []
+        
+        # Initialize sound notifier if available and enabled
+        self.notifier = None
+        if SOUNDS_AVAILABLE and config.enable_sounds:
+            self.notifier = get_notifier(enabled=True)
     
     def should_stop(self) -> tuple[bool, str]:
         """Check if any stop condition is met"""
@@ -126,6 +140,10 @@ class RalphLoopAgent:
                 if self.config.verbose:
                     print(f"⚠️  Stopping: {reason}")
                 
+                # Play warning sound when stopping due to limits
+                if self.notifier:
+                    self.notifier.play_warning()
+                
                 return RalphLoopResult(
                     success=False,
                     iterations=self.iteration_count - 1,  # Don't count the stopped iteration
@@ -159,6 +177,10 @@ class RalphLoopAgent:
                         print(f"   Feedback: {verification.feedback}")
                     print(f"   Confidence: {verification.confidence:.1%}")
                 
+                # Play subtle iteration sound if incomplete (attention may be needed soon)
+                if not verification.complete and self.notifier:
+                    self.notifier.play_iteration()
+                
                 # Check if verified complete
                 if verification.complete:
                     duration_ms = int((time.time() - start_time) * 1000)
@@ -166,6 +188,10 @@ class RalphLoopAgent:
                     if self.config.verbose:
                         print(f"\n🎉 Task verified complete in {self.iteration_count} iterations")
                         print(f"   Duration: {duration_ms}ms")
+                    
+                    # Play success sound when task completes
+                    if self.notifier:
+                        self.notifier.play_success()
                     
                     return RalphLoopResult(
                         success=True,
@@ -197,6 +223,10 @@ Original task: {task_prompt}
             except Exception as e:
                 if self.config.verbose:
                     print(f"❌ Error during iteration {self.iteration_count}: {e}")
+                
+                # Play error sound
+                if self.notifier:
+                    self.notifier.play_error()
                 
                 return RalphLoopResult(
                     success=False,
@@ -323,7 +353,7 @@ Your security audit will be verified for:
 def main():
     """CLI interface for Ralph Loop execution"""
     if len(sys.argv) < 3:
-        print("Usage: python ralph_loop_agent.py <agent_type> <task_prompt> [--max-iterations N] [--verbose]")
+        print("Usage: python ralph_loop_agent.py <agent_type> <task_prompt> [--max-iterations N] [--verbose] [--no-sounds]")
         print("\nAgent types: architect, coder, reviewer, debug, docs, devops, security")
         sys.exit(1)
     
@@ -333,17 +363,21 @@ def main():
     # Parse optional args
     max_iterations = 10
     verbose = False
+    enable_sounds = True
     
     for i, arg in enumerate(sys.argv[3:]):
         if arg == '--max-iterations' and i + 4 < len(sys.argv):
             max_iterations = int(sys.argv[i + 4])
         elif arg == '--verbose':
             verbose = True
+        elif arg == '--no-sounds':
+            enable_sounds = False
     
     config = RalphLoopConfig(
         agent_type=agent_type,
         max_iterations=max_iterations,
-        verbose=verbose
+        verbose=verbose,
+        enable_sounds=enable_sounds
     )
     
     ralph = RalphLoopAgent(config)
