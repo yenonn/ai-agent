@@ -73,9 +73,24 @@ class TaskState:
 class TaskTracker:
     """Manages task tracking and coordination for the dev team."""
 
-    VALID_STATES = [s.value for s in TaskStatus]
+    VALID_STATES = [s.value for s in TaskStatus] + [
+        "debugging",
+        "documenting",
+        "devops",
+        "security_audit",
+    ]
     VALID_PRIORITIES = [p.value for p in TaskPriority]
-    VALID_ASSIGNEES = ["architect", "coder", "pr_reviewer", "qa_tester", "coordinator"]
+    VALID_ASSIGNEES = [
+        "architect",
+        "coder",
+        "pr_reviewer",
+        "qa_tester",
+        "coordinator",
+        "debug",
+        "docs",
+        "devops",
+        "security",
+    ]
 
     def __init__(self, project_root: str = "."):
         # Use global .dev_team directory (configurable via DEV_TEAM_DIR env var)
@@ -228,20 +243,52 @@ class TaskTracker:
 
         self._save_tasks(tasks)
         self._mark_session_changed()
-    
+
+        # Sound notifications based on new state
+        if new_state == "complete":
+            self._play_sound("play_success")
+        elif new_state == "blocked":
+            self._play_sound("play_error")
+        elif new_state == "iteration":
+            self._play_sound("play_iteration")
+        elif new_state in ("reviewing", "testing"):
+            self._play_sound("play_completion")
+
     def _mark_session_changed(self):
         """Mark the current session as having unsaved changes."""
         try:
             import importlib.util
-            
+
             session_manager_path = Path(__file__).parent / "session_manager.py"
             if session_manager_path.exists():
-                spec = importlib.util.spec_from_file_location("session_manager", session_manager_path)
+                spec = importlib.util.spec_from_file_location(
+                    "session_manager", session_manager_path
+                )
                 if spec and spec.loader:
                     session_manager = importlib.util.module_from_spec(spec)
                     spec.loader.exec_module(session_manager)
                     manager = session_manager.SessionManager()
                     manager.update_session(unsaved_changes=True)
+        except Exception:
+            pass
+
+    def _play_sound(self, method_name: str):
+        """Play a sound notification via SoundNotifier (silently degrades if unavailable)."""
+        try:
+            import importlib.util
+
+            sn_path = Path(__file__).parent / "sound_notifications.py"
+            if not sn_path.exists():
+                return
+            spec = importlib.util.spec_from_file_location(
+                "sound_notifications", sn_path
+            )
+            if spec is None or spec.loader is None:
+                return
+            sn_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(sn_module)  # type: ignore[union-attr]
+            notifier = sn_module.get_notifier()
+            getattr(notifier, method_name)()
         except Exception:
             pass
 
@@ -269,6 +316,7 @@ class TaskTracker:
         tasks[task_id]["current_state"] = "blocked"
         tasks[task_id]["updated_at"] = datetime.now().isoformat()
         self._save_tasks(tasks)
+        self._play_sound("play_error")
 
     def remove_blocker(self, task_id: str, blocker_index: int):
         """Remove a blocker from a task."""
@@ -589,13 +637,16 @@ def main():
             task_id = sys.argv[2]
             tree = tracker.get_task_tree(task_id)
             print(json.dumps(tree, indent=2))
-        
+
         elif command == "session-status":
             try:
                 import importlib.util
+
                 session_manager_path = Path(__file__).parent / "session_manager.py"
                 if session_manager_path.exists():
-                    spec = importlib.util.spec_from_file_location("session_manager", session_manager_path)
+                    spec = importlib.util.spec_from_file_location(
+                        "session_manager", session_manager_path
+                    )
                     if spec and spec.loader:
                         session_manager = importlib.util.module_from_spec(spec)
                         spec.loader.exec_module(session_manager)
@@ -603,6 +654,7 @@ def main():
                         session = manager.get_current_session()
                         if session:
                             from dataclasses import asdict
+
                             print(json.dumps(asdict(session), indent=2))
                         else:
                             print("No active session")
@@ -610,32 +662,40 @@ def main():
                     print("Session manager not found")
             except Exception as e:
                 print(f"Error: {e}")
-        
+
         elif command == "checkpoint":
             try:
                 import importlib.util
+
                 session_manager_path = Path(__file__).parent / "session_manager.py"
                 if session_manager_path.exists():
-                    spec = importlib.util.spec_from_file_location("session_manager", session_manager_path)
+                    spec = importlib.util.spec_from_file_location(
+                        "session_manager", session_manager_path
+                    )
                     if spec and spec.loader:
                         session_manager = importlib.util.module_from_spec(spec)
                         spec.loader.exec_module(session_manager)
                         manager = session_manager.SessionManager()
                         name = sys.argv[2] if len(sys.argv) > 2 else None
-                        description = " ".join(sys.argv[3:]) if len(sys.argv) > 3 else ""
+                        description = (
+                            " ".join(sys.argv[3:]) if len(sys.argv) > 3 else ""
+                        )
                         checkpoint_id = manager.create_checkpoint(name, description)
                         print(f"Created checkpoint: {checkpoint_id}")
                 else:
                     print("Session manager not found")
             except Exception as e:
                 print(f"Error: {e}")
-        
+
         elif command == "exit-summary":
             try:
                 import importlib.util
+
                 session_manager_path = Path(__file__).parent / "session_manager.py"
                 if session_manager_path.exists():
-                    spec = importlib.util.spec_from_file_location("session_manager", session_manager_path)
+                    spec = importlib.util.spec_from_file_location(
+                        "session_manager", session_manager_path
+                    )
                     if spec and spec.loader:
                         session_manager = importlib.util.module_from_spec(spec)
                         spec.loader.exec_module(session_manager)

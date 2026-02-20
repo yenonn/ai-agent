@@ -57,20 +57,40 @@ class KnowledgeStore:
     VALID_STATUSES = ["active", "deprecated", "archived"]
 
     AGENT_CATEGORY_MAP = {
-        "architect":   ["architecture", "convention", "dependency", "security", "performance"],
-        "coder":       ["pattern", "bug_fix", "convention", "performance", "testing"],
+        "architect": [
+            "architecture",
+            "convention",
+            "dependency",
+            "security",
+            "performance",
+        ],
+        "coder": ["pattern", "bug_fix", "convention", "performance", "testing"],
         "pr_reviewer": ["convention", "security", "architecture", "pattern"],
-        "qa_tester":   ["testing", "bug_fix", "performance"],
-        "debug":       ["bug_fix", "performance", "lesson_learned"],
-        "docs":        ["documentation", "convention"],
-        "devops":      ["devops", "dependency", "security"],
-        "security":    ["security", "convention", "dependency"],
+        "qa_tester": ["testing", "bug_fix", "performance"],
+        "debug": ["bug_fix", "performance", "lesson_learned"],
+        "docs": ["documentation", "convention"],
+        "devops": ["devops", "dependency", "security"],
+        "security": ["security", "convention", "dependency"],
         "coordinator": ["lesson_learned", "architecture"],
     }
 
     _STOP_WORDS: Set[str] = {
-        "a", "an", "the", "is", "in", "on", "at", "to", "of", "for",
-        "with", "and", "or", "not", "this", "that",
+        "a",
+        "an",
+        "the",
+        "is",
+        "in",
+        "on",
+        "at",
+        "to",
+        "of",
+        "for",
+        "with",
+        "and",
+        "or",
+        "not",
+        "this",
+        "that",
     }
 
     def __init__(self, project_root: str = "."):
@@ -211,7 +231,9 @@ class KnowledgeStore:
         entry["updated_at"] = datetime.now().isoformat()
         self._save_knowledge(knowledge)
 
-    def deprecate_entry(self, knowledge_id: str, superseded_by: Optional[str] = None) -> None:
+    def deprecate_entry(
+        self, knowledge_id: str, superseded_by: Optional[str] = None
+    ) -> None:
         """Deprecate a knowledge entry, optionally linking to the replacement entry."""
         knowledge = self._load_knowledge()
         if knowledge_id not in knowledge:
@@ -277,6 +299,7 @@ class KnowledgeStore:
         status: str = "active",
         project_scope: Optional[str] = None,
         limit: int = 10,
+        include_content: bool = False,
     ) -> List[Dict[str, Any]]:
         """
         Search knowledge entries with relevance scoring.
@@ -338,7 +361,9 @@ class KnowledgeStore:
 
             # Recency penalty (days since last update)
             try:
-                updated_at = datetime.fromisoformat(entry.get("updated_at", now.isoformat())).replace(tzinfo=None)
+                updated_at = datetime.fromisoformat(
+                    entry.get("updated_at", now.isoformat())
+                ).replace(tzinfo=None)
                 days_old = (now - updated_at).days
             except (ValueError, TypeError):
                 days_old = 0
@@ -349,11 +374,13 @@ class KnowledgeStore:
         # Sort descending by score
         results.sort(key=lambda x: x[0], reverse=True)
 
-        # Build summaries (exclude content)
+        # Build result list, optionally including the full content field
         summaries = []
         for _, entry in results[:limit]:
-            summary = {k: v for k, v in entry.items() if k != "content"}
-            summaries.append(summary)
+            if include_content:
+                summaries.append(dict(entry))
+            else:
+                summaries.append({k: v for k, v in entry.items() if k != "content"})
 
         return summaries
 
@@ -362,6 +389,7 @@ class KnowledgeStore:
         agent: str,
         context_keywords: Optional[List[str]] = None,
         limit: int = 5,
+        include_content: bool = False,
     ) -> List[Dict[str, Any]]:
         """Retrieve the most relevant knowledge entries for a specific agent role."""
         agent_categories = self.AGENT_CATEGORY_MAP.get(agent, [])
@@ -370,14 +398,20 @@ class KnowledgeStore:
             query=query if query else None,
             categories=agent_categories if agent_categories else None,
             limit=limit,
+            include_content=include_content,
         )
 
-    def list_by_category(self, category: str, status: str = "active") -> List[Dict[str, Any]]:
+    def list_by_category(
+        self, category: str, status: str = "active"
+    ) -> List[Dict[str, Any]]:
         """List all knowledge entries in a given category filtered by status (summaries only)."""
         knowledge = self._load_knowledge()
         results = []
         for entry in knowledge.values():
-            if entry.get("category") == category and entry.get("status", "active") == status:
+            if (
+                entry.get("category") == category
+                and entry.get("status", "active") == status
+            ):
                 results.append({k: v for k, v in entry.items() if k != "content"})
         return results
 
@@ -394,7 +428,7 @@ class KnowledgeStore:
             for entry in knowledge.values()
             if entry.get("status") == status
         ]
-        return filtered[offset: offset + limit]
+        return filtered[offset : offset + limit]
 
     def get_stats(self) -> Dict[str, Any]:
         """Return aggregate statistics about the knowledge store."""
@@ -427,14 +461,24 @@ class KnowledgeStore:
 
         return {
             "total_entries": len(knowledge),
-            "active_entries": sum(1 for e in knowledge.values() if e.get("status", "active") == "active"),
+            "active_entries": sum(
+                1 for e in knowledge.values() if e.get("status", "active") == "active"
+            ),
             "by_category": by_category,
             "by_agent": by_agent,
             "by_confidence": by_confidence,
             "by_status": {
-                "active": sum(1 for e in knowledge.values() if e.get("status", "active") == "active"),
-                "deprecated": sum(1 for e in knowledge.values() if e.get("status") == "deprecated"),
-                "archived": sum(1 for e in knowledge.values() if e.get("status") == "archived"),
+                "active": sum(
+                    1
+                    for e in knowledge.values()
+                    if e.get("status", "active") == "active"
+                ),
+                "deprecated": sum(
+                    1 for e in knowledge.values() if e.get("status") == "deprecated"
+                ),
+                "archived": sum(
+                    1 for e in knowledge.values() if e.get("status") == "archived"
+                ),
             },
             "most_accessed": most_accessed,
         }
@@ -443,6 +487,7 @@ class KnowledgeStore:
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+
 
 def _parse_flags(args: List[str]) -> tuple:
     """Parse --key value style flags from args list. Returns (positional, flags_dict)."""
@@ -469,15 +514,21 @@ def main():
     if len(sys.argv) < 2:
         print("Usage: knowledge_store.py <command> [args...]")
         print("Commands:")
-        print("  add <title> <category> <content> <summary> <tags_csv> <agent> [task_ids_csv] [confidence]")
-        print("  update <knowledge_id> [--title T] [--content C] [--summary S] [--tags csv] [--confidence C] [--status S]")
+        print(
+            "  add <title> <category> <content> <summary> <tags_csv> <agent> [task_ids_csv] [confidence]"
+        )
+        print(
+            "  update <knowledge_id> [--title T] [--content C] [--summary S] [--tags csv] [--confidence C] [--status S]"
+        )
         print("  get <knowledge_id>")
-        print("  search <query> [--category C] [--tags csv] [--agent A] [--task <task_id>] [--limit N]")
+        print(
+            "  search <query> [--category C] [--tags csv] [--agent A] [--task <task_id>] [--limit N] [--show-content]"
+        )
         print("  list [--category C] [--limit N] [--offset N]")
         print("  deprecate <knowledge_id> [superseded_by_id]")
         print("  link-task <knowledge_id> <task_id>")
         print("  tag <knowledge_id> <tags_csv>")
-        print("  for-agent <agent_name> [keywords_csv] [--limit N]")
+        print("  for-agent <agent_name> [keywords_csv] [--limit N] [--show-content]")
         print("  stats")
         sys.exit(1)
 
@@ -565,6 +616,7 @@ def main():
             agent_author = flags.get("agent")
             task_filter = flags.get("task")
             limit = int(flags.get("limit", 10))
+            show_content = "show-content" in flags
             results = store.search(
                 query=query,
                 categories=categories,
@@ -572,6 +624,7 @@ def main():
                 agent_author=agent_author,
                 task_id=task_filter,
                 limit=limit,
+                include_content=show_content,
             )
             print(json.dumps(results, indent=2))
 
@@ -589,7 +642,9 @@ def main():
 
         elif command == "deprecate":
             if not rest:
-                print("Usage: knowledge_store.py deprecate <knowledge_id> [superseded_by_id]")
+                print(
+                    "Usage: knowledge_store.py deprecate <knowledge_id> [superseded_by_id]"
+                )
                 sys.exit(1)
             knowledge_id = rest[0]
             superseded_by = rest[1] if len(rest) > 1 else None
@@ -619,7 +674,9 @@ def main():
 
         elif command == "for-agent":
             if not rest:
-                print("Usage: knowledge_store.py for-agent <agent_name> [keywords_csv] [--limit N]")
+                print(
+                    "Usage: knowledge_store.py for-agent <agent_name> [keywords_csv] [--limit N] [--show-content]"
+                )
                 sys.exit(1)
             positional, flags = _parse_flags(rest)
             agent_name = positional[0]
@@ -627,7 +684,10 @@ def main():
             if len(positional) > 1:
                 keywords = [k.strip() for k in positional[1].split(",") if k.strip()]
             limit = int(flags.get("limit", 5))
-            results = store.get_for_agent(agent_name, keywords, limit=limit)
+            show_content = "show-content" in flags
+            results = store.get_for_agent(
+                agent_name, keywords, limit=limit, include_content=show_content
+            )
             print(json.dumps(results, indent=2))
 
         elif command == "stats":
