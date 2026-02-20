@@ -9,7 +9,7 @@ import json
 import os
 import sys
 from datetime import datetime
-from typing import Dict, List, Optional, Any, Set
+from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
 from enum import Enum
@@ -653,8 +653,6 @@ def main():
                         manager = session_manager.SessionManager()
                         session = manager.get_current_session()
                         if session:
-                            from dataclasses import asdict
-
                             print(json.dumps(asdict(session), indent=2))
                         else:
                             print("No active session")

@@ -12,7 +12,7 @@ import re
 import sys
 from datetime import datetime
 from typing import Dict, List, Optional, Any, Set
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from pathlib import Path
 
 
